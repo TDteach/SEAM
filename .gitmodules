@@ -1,0 +1,3 @@
+[submodule "trojanzoo"]
+	path = trojanzoo
+	url = https://github.com/TDteach/trojanzoo.git
