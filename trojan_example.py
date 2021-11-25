@@ -10,121 +10,240 @@ import skimage.io
 import torch
 import advertorch.attacks
 import advertorch.context
+import json
+import pickle
+import time
 
-import warnings 
+from torch.utils.data import Dataset, DataLoader
+
+import warnings
+
 warnings.filterwarnings("ignore")
+
+DEVICE = 'cuda'
+
+
+def image_transform(img):
+    # convert to CHW dimension ordering
+    img = np.transpose(img, (2, 0, 1))
+    # convert to NCHW dimension ordering
+    # normalize the image matching pytorch.transforms.ToTensor()
+    img = img / 255.0
+    return img
+
+
+def load_img(fn):
+    img = skimage.io.imread(fn)
+    img = img.astype(dtype=np.float32)
+
+    # perform center crop to what the CNN is expecting 224x224
+    h, w, c = img.shape
+    dx = int((w - 224) / 2)
+    dy = int((w - 224) / 2)
+    img = img[dy:dy + 224, dx:dx + 224, :]
+
+    img = image_transform(img)
+    return img
+
+
+def load_img_folder(folder):
+    # Inference the example images in data
+    fns = [os.path.join(folder, fn) for fn in os.listdir(folder) if fn.endswith(example_img_format)]
+    fns.sort()  # ensure file ordering
+
+    imgs = list()
+    for fn in fns:
+        img = load_img(fn)
+        imgs.append(img)
+
+    imgs_numpy = np.asarray(imgs)
+    return imgs_numpy
+
+
+class ImageFolderDataset(Dataset):
+    def __init__(self, root):
+        self.cls_dict = self.get_classes_from_dir(root)
+        self.imgs, self.labs = self.load()
+        self.n_classes = len(self.cls_dict.keys())
+
+    def load(self):
+        imgs = list()
+        labs = list()
+        for cls_id in self.cls_dict:
+            for fn in self.cls_dict[cls_id]:
+                img = load_img(fn)
+                imgs.append(img)
+                labs.append(cls_id)
+
+        imgs = np.asarray(imgs, dtype=np.float32)
+        labs = np.asarray(labs, dtype=np.int64)
+
+        return imgs, labs
+
+    def get_classes_from_dir(self, directory):
+        fnames = sorted(entry.name for entry in os.scandir(directory) if not entry.is_dir())
+        cls_dict = dict()
+        for fn in fnames:
+            if fn.startswith('class'):
+                cls_id = int(fn.split('_')[1])
+                if cls_id not in cls_dict:
+                    cls_dict[cls_id] = list()
+                cls_dict[cls_id].append(os.path.join(directory, fn))
+        return cls_dict
+
+    def __getitem__(self, idx):
+        return self.imgs[idx], self.labs[idx]
+
+    def __len__(self):
+        return len(self.imgs)
+
+
+class PoisonedFolderDataset(ImageFolderDataset):
+    def __init__(self, root, trigger_config):
+        self.tgr_cfg = trigger_config
+        self.cls_dict = self.get_classes_from_dir(root)
+        self.imgs, self.labs = self.load()
+        self.n_classes = len(self.cls_dict.keys())
+
+    def get_classes_from_dir(self, directory):
+        fnames = sorted(entry.name for entry in os.scandir(directory) if not entry.is_dir())
+        cls_dict = dict()
+        for fn in fnames:
+            if fn.startswith('class'):
+                tgr_id = int(fn.split('_')[3])
+                tgt_cls = self.tgr_cfg[tgr_id]['target_class']
+                if tgt_cls not in cls_dict:
+                    cls_dict[tgt_cls] = list()
+                cls_dict[tgt_cls].append(os.path.join(directory, fn))
+        return cls_dict
+
+
+def test_model(model, dataloader):
+    model.eval()
+
+    crt, tot = 0, 0
+    for img, lab in dataloader:
+        img = img.to(DEVICE)
+        lab = lab.to(DEVICE)
+        logits = model(img)
+        pred = torch.argmax(logits, axis=1)
+        crt += torch.sum(torch.eq(pred, lab)).detach().cpu().numpy()
+        tot += len(lab)
+
+    return crt / tot
+
+
+def train(model, dataloader, n_classes, epochs=10, random_label=False, poisoned_dataloader=None):
+    time_sum = 0
+    records = list()
+    # optimizer = torch.optim.Adam(model.parameters(), lr=5e-3, weight_decay=5e-4)
+    optimizer = torch.optim.SGD(model.parameters(), lr=5e-3, momentum=0.9, weight_decay=5e-4)
+    loss_fn = torch.nn.CrossEntropyLoss()
+    patience = 5
+    for epoch in range(epochs):
+        st_time = time.time()
+        model.train()
+        for img, lab in dataloader:
+            if random_label:
+                lab = torch.randint(low=0, high=n_classes, size=lab.shape)
+
+            optimizer.zero_grad()
+            img = img.to(DEVICE)
+            lab = lab.to(DEVICE)
+            logits = model(img)
+            loss = loss_fn(logits, lab)
+            pred = torch.argmax(logits, axis=1)
+            correct = torch.sum(torch.eq(pred, lab)).detach().cpu().numpy()
+            loss.backward()
+            optimizer.step()
+
+        ed_time = time.time()
+        time_sum += ed_time-st_time
+
+        acc = test_model(model, dataloader)
+        print('epoch %d:' % epoch, 'test acc:', acc, 'time elapse:', ed_time-st_time)
+        if poisoned_dataloader is not None:
+            asr = test_model(model, poisoned_dataloader)
+            print('ASR:', asr)
+        records.append({'epoch': epoch, 'acc': acc, 'asr': asr})
+
+        if random_label:
+            if acc < 2/n_classes:
+                patience -= 1
+        else:
+            if acc > 0.99:
+                patience -= 1
+        if patience <= 0:
+            break
+
+    return model, records, time_sum
 
 
 def fake_trojan_detector(model_filepath, result_filepath, scratch_dirpath, examples_dirpath, example_img_format='png'):
-
     print('model_filepath = {}'.format(model_filepath))
     print('result_filepath = {}'.format(result_filepath))
     print('scratch_dirpath = {}'.format(scratch_dirpath))
     print('examples_dirpath = {}'.format(examples_dirpath))
 
+    batch_size = 32
+    max_epochs = 100
+
+    md_folder, tail = os.path.split(examples_dirpath)
+    rt_folder, mdid = os.path.split(md_folder)
+    poisoned_dirpath = os.path.join(md_folder, 'poisoned_example_data')
+    config_dirpath = os.path.join(md_folder, 'config.json')
+    with open(config_dirpath, 'r') as jsonf:
+        config = json.load(jsonf)
+    trigger_config = config['triggers']
+
     # load the model and move it to the GPU
-    model = torch.load(model_filepath, map_location=torch.device('cuda'))
+    model = torch.load(model_filepath, map_location=torch.device(DEVICE))
 
-    # Inference the example images in data
-    fns = [os.path.join(examples_dirpath, fn) for fn in os.listdir(examples_dirpath) if fn.endswith(example_img_format)]
-    fns.sort()  # ensure file ordering
-    if len(fns) > 5: fns = fns[0:5]  # limit to 5 images
+    dataset = ImageFolderDataset(examples_dirpath)
+    poisoned_dataset = PoisonedFolderDataset(poisoned_dirpath, trigger_config)
+    n_classes = dataset.n_classes
+    dataloader = DataLoader(dataset, batch_size=batch_size, pin_memory=True)
+    poisoned_dataloader = DataLoader(poisoned_dataset, batch_size=batch_size, pin_memory=True)
 
-    # setup PGD
-    # define parameters of the adversarial attack
-    attack_eps = float(8/255)
-    attack_iterations = int(7)
-    eps_iter = (2.0 * attack_eps) / float(attack_iterations)
+    print('===========forget=================')
 
-    # create the attack object
-    attack = advertorch.attacks.LinfPGDAttack(
-        predict=model,
-        loss_fn=torch.nn.CrossEntropyLoss(reduction="sum"),
-        eps=attack_eps,
-        nb_iter=attack_iterations,
-        eps_iter=eps_iter)
+    asr = test_model(model, poisoned_dataloader)
+    print('ASR:', asr)
 
-    for fn in fns:
-        # read the image (using skimage)
-        img = skimage.io.imread(fn)
-        img = img.astype(dtype=np.float32)
+    model, for_records, for_time = train(model, dataloader, n_classes, epochs=max_epochs, random_label=True,
+                               poisoned_dataloader=poisoned_dataloader)
+    print('time usage:', for_time)
 
-        # perform center crop to what the CNN is expecting 224x224
-        h, w, c = img.shape
-        dx = int((w - 224) / 2)
-        dy = int((w - 224) / 2)
-        img = img[dy:dy + 224, dx:dx + 224, :]
+    print('===========recover=================')
 
-        # convert to CHW dimension ordering
-        img = np.transpose(img, (2, 0, 1))
-        # convert to NCHW dimension ordering
-        img = np.expand_dims(img, 0)
-        # normalize the image matching pytorch.transforms.ToTensor()
-        img = img / 255.0
+    model, rec_records, rec_time = train(model, dataloader, n_classes, epochs=max_epochs, random_label=False,
+                               poisoned_dataloader=poisoned_dataloader)
+    print('time usage:', rec_time)
 
-        # convert image to a gpu tensor
-        batch_data = torch.from_numpy(img).cuda()
+    out_records = {'forget': for_records, 'recover': rec_records, 'for_time': for_time, 'rec_time': rec_time}
 
-        # inference
-        logits = model(batch_data).cpu().detach().numpy()
-        pred = np.argmax(logits)
-        # create a prediction tensor without graph connections by copying it to a numpy array
-        pred_tensor = torch.from_numpy(np.asarray(pred)).reshape(-1).cuda()
+    out_path = os.path.join('records', mdid+'.pkl')
 
-        # apply PGD attack to batch_data
-        with advertorch.context.ctx_noparamgrad_and_eval(model):
-            adv_batch_data = attack.perturb(batch_data, pred_tensor).cpu().detach().numpy()
-
-        # inference the adversarial image
-        adv_logits = model(torch.from_numpy(adv_batch_data).cuda()).cpu().detach().numpy()
-        adv_pred = np.argmax(adv_logits)
-
-        print('example img filepath = {}, logits = {}'.format(fn, logits))
-        print('example img filepath = {}, pgd-adv logits = {}'.format(fn, adv_logits))
-
-
-    # Test scratch space
-    img = np.random.rand(1, 3, 224, 224)
-    img_tmp_fp = os.path.join(scratch_dirpath, 'img')
-    np.save(img_tmp_fp, img)
-
-    # test model inference if no example images exist
-    if len(fns) == 0:
-        batch_data = torch.from_numpy(img).cuda()
-        # inference
-        logits = model(batch_data).cpu().detach().numpy()
-        pred = np.argmax(logits)
-        # create a prediction tensor without graph connections by copying it to a numpy array
-        pred_tensor = torch.from_numpy(np.asarray(pred)).reshape(-1).cuda()
-
-        # apply PGD attack to batch_data
-        with advertorch.context.ctx_noparamgrad_and_eval(model):
-            adv_batch_data = attack.perturb(batch_data, pred_tensor).cpu().detach().numpy()
-
-        # inference the adversarial image
-        adv_logits = model(torch.from_numpy(adv_batch_data).cuda()).cpu().detach().numpy()
-        adv_pred = np.argmax(adv_logits)
-
-        print('noise image inference logits = {}'.format(logits))
-        print('noise image pgd-adv inference logits = {}'.format(adv_logits))
-
-    trojan_probability = np.random.rand()
-    print('Trojan Probability: {}'.format(trojan_probability))
-
-    with open(result_filepath, 'w') as fh:
-        fh.write("{}".format(trojan_probability))
+    with open(out_path, 'wb') as f:
+        pickle.dump(out_records, f)
 
 
 if __name__ == "__main__":
     import argparse
 
-    parser = argparse.ArgumentParser(description='Fake Trojan Detector to Demonstrate Test and Evaluation Infrastructure.')
-    parser.add_argument('--model_filepath', type=str, help='File path to the pytorch model file to be evaluated.', default='./model.pt')
-    parser.add_argument('--result_filepath', type=str, help='File path to the file where output result should be written. After execution this file should contain a single line with a single floating point trojan probability.', default='./output')
-    parser.add_argument('--scratch_dirpath', type=str, help='File path to the folder where scratch disk space exists. This folder will be empty at execution start and will be deleted at completion of execution.', default='./scratch')
-    parser.add_argument('--examples_dirpath', type=str, help='File path to the folder of examples which might be useful for determining whether a model is poisoned.', default='./example')
+    parser = argparse.ArgumentParser(
+        description='Fake Trojan Detector to Demonstrate Test and Evaluation Infrastructure.')
+    parser.add_argument('--model_filepath', type=str, help='File path to the pytorch model file to be evaluated.',
+                        default='./model.pt')
+    parser.add_argument('--result_filepath', type=str,
+                        help='File path to the file where output result should be written. After execution this file should contain a single line with a single floating point trojan probability.',
+                        default='./output')
+    parser.add_argument('--scratch_dirpath', type=str,
+                        help='File path to the folder where scratch disk space exists. This folder will be empty at execution start and will be deleted at completion of execution.',
+                        default='./scratch')
+    parser.add_argument('--examples_dirpath', type=str,
+                        help='File path to the folder of examples which might be useful for determining whether a model is poisoned.',
+                        default='./example')
 
     args = parser.parse_args()
     fake_trojan_detector(args.model_filepath, args.result_filepath, args.scratch_dirpath, args.examples_dirpath)
-
-
