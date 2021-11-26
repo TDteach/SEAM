@@ -136,8 +136,11 @@ def test_model(model, dataloader):
 def train(model, dataloader, n_classes, epochs=10, random_label=False, poisoned_dataloader=None):
     time_sum = 0
     records = list()
-    # optimizer = torch.optim.Adam(model.parameters(), lr=5e-3, weight_decay=5e-4)
-    optimizer = torch.optim.SGD(model.parameters(), lr=5e-3, momentum=0.9, weight_decay=5e-4)
+    if random_label is True:
+        optimizer = torch.optim.Adam(model.parameters(), lr=1e-3, weight_decay=5e-4)
+    else:
+        optimizer = torch.optim.Adam(model.parameters(), betas=(0.9, 0.5), lr=5e-4, weight_decay=5e-5)
+        #optimizer = torch.optim.SGD(model.parameters(), lr=5e-3, momentum=0.9, weight_decay=5e-4)
     loss_fn = torch.nn.CrossEntropyLoss()
     patience = 5
     for epoch in range(epochs):
@@ -186,7 +189,7 @@ def fake_trojan_detector(model_filepath, result_filepath, scratch_dirpath, examp
     print('examples_dirpath = {}'.format(examples_dirpath))
 
     batch_size = 32
-    max_epochs = 100
+    max_epochs = 500
 
     md_folder, tail = os.path.split(examples_dirpath)
     rt_folder, mdid = os.path.split(md_folder)
