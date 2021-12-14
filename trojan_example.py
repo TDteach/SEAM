@@ -100,7 +100,10 @@ class ImageFolderDataset(Dataset):
 
 class PoisonedFolderDataset(ImageFolderDataset):
     def __init__(self, root, trigger_config):
-        self.tgr_cfg = trigger_config
+        if isinstance(trigger_config, int):
+            self.tgr_cls = trigger_config
+        else:
+            self.tgr_cfg = trigger_config
         self.cls_dict = self.get_classes_from_dir(root)
         self.imgs, self.labs = self.load()
         self.n_classes = len(self.cls_dict.keys())
@@ -110,8 +113,11 @@ class PoisonedFolderDataset(ImageFolderDataset):
         cls_dict = dict()
         for fn in fnames:
             if fn.startswith('class'):
-                tgr_id = int(fn.split('_')[3])
-                tgt_cls = self.tgr_cfg[tgr_id]['target_class']
+                if hasattr(self, 'tgr_cls'):
+                    tgt_cls = self.tgr_cls
+                else:
+                    tgr_id = int(fn.split('_')[3])
+                    tgt_cls = self.tgr_cfg[tgr_id]['target_class']
                 if tgt_cls not in cls_dict:
                     cls_dict[tgt_cls] = list()
                 cls_dict[tgt_cls].append(os.path.join(directory, fn))
@@ -194,7 +200,10 @@ def fake_trojan_detector(model_filepath, result_filepath, scratch_dirpath, examp
     config_dirpath = os.path.join(md_folder, 'config.json')
     with open(config_dirpath, 'r') as jsonf:
         config = json.load(jsonf)
-    trigger_config = config['triggers']
+    if 'TRIGGER_TARGET_CLASS' in config:
+        trigger_config = int(config['TRIGGER_TARGET_CLASS'])
+    else:
+        trigger_config = config['triggers']
 
     # load the model and move it to the GPU
     model = torch.load(model_filepath, map_location=torch.device(DEVICE))

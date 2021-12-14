@@ -5,16 +5,15 @@ import torch
 import re
 
 home = os.environ['HOME']
-contest_round = 'round4/round4-train-dataset'
-folder_root = os.path.join(home, 'data/' + contest_round)
+contest_round = 'trojai/round3/round3-train-dataset'
+folder_root = os.path.join(home, 'share/' + contest_round)
 gt_path = os.path.join(folder_root, 'METADATA.csv')
 row_filter = {
     'poisoned': ['True'],
     # 'trigger_option': ['both_trigger'],
     'trigger_type': None,
     # 'model_architecture':['google/electra-small-discriminator'],
-    # 'model_architecture':['deepset/roberta-base-squad2'],
-    # 'model_architecture': ['roberta-base'],
+    # 'model_architecture':['deepset/roberta-base-squad2'], # 'model_architecture': ['roberta-base'],
     'model_architecture': None,
     # 'source_dataset': ['squad_v2'],
     'source_dataset': None,
@@ -112,7 +111,7 @@ if __name__ == '__main__':
         print('model_architecture:', md_archi)
 
         # run_script='singularity run --nv ./example_trojan_detector.simg'
-        run_script = 'CUDA_VISIBLE_DEVICES=0 python3 trojan_example.py'
+        run_script = 'CUDA_VISIBLE_DEVICES=1 python3 trojan_example.py'
         cmmd = run_script + ' --model_filepath=' + model_filepath + ' --examples_dirpath=' + examples_dirpath
 
         print(cmmd)
