@@ -13,7 +13,8 @@ row_filter = {
     # 'trigger_option': ['both_trigger'],
     'trigger_type': None,
     # 'model_architecture':['google/electra-small-discriminator'],
-    # 'model_architecture':['deepset/roberta-base-squad2'], # 'model_architecture': ['roberta-base'],
+    # 'model_architecture':['deepset/roberta-base-squad2'],
+    # 'model_architecture': ['mobilenetv2'],
     'model_architecture': None,
     # 'source_dataset': ['squad_v2'],
     'source_dataset': None,
@@ -91,6 +92,9 @@ if __name__ == '__main__':
     for k, md_name in enumerate(dirs):
         name_num = int(md_name.split('-')[1])
 
+        if name_num < 900:
+            continue
+
         folder_path = os.path.join(folder_root, md_name)
         if not os.path.exists(folder_path):
             print(folder_path + ' dose not exist')
@@ -110,11 +114,10 @@ if __name__ == '__main__':
         print('poisoned:', poisoned)
         print('model_architecture:', md_archi)
 
-        # run_script='singularity run --nv ./example_trojan_detector.simg'
-        run_script = 'CUDA_VISIBLE_DEVICES=1 python3 trojan_example.py'
+        run_script = 'CUDA_VISIBLE_DEVICES=0 python3 trojan_example_r34.py'
         cmmd = run_script + ' --model_filepath=' + model_filepath + ' --examples_dirpath=' + examples_dirpath
 
         print(cmmd)
         os.system(cmmd)
 
-        #break
+        # break

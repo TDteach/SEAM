@@ -125,12 +125,13 @@ class PoisonedFolderDataset(ImageFolderDataset):
 
 
 def test_model(model, dataloader):
+    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     model.eval()
 
     crt, tot = 0, 0
     for img, lab in dataloader:
-        img = img.to(DEVICE)
-        lab = lab.to(DEVICE)
+        img = img.to(device)
+        lab = lab.to(device)
         logits = model(img)
         pred = torch.argmax(logits, axis=1)
         crt += torch.sum(torch.eq(pred, lab)).detach().cpu().numpy()
@@ -140,12 +141,17 @@ def test_model(model, dataloader):
 
 
 def train(model, dataloader, n_classes, epochs=10, random_label=False, poisoned_dataloader=None):
+    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     time_sum = 0
     records = list()
-    # optimizer = torch.optim.Adam(model.parameters(), lr=5e-3, weight_decay=5e-4)
-    optimizer = torch.optim.SGD(model.parameters(), lr=5e-3, momentum=0.9, weight_decay=5e-4)
+    if random_label is True:
+        optimizer = torch.optim.Adam(model.parameters(), lr=1e-3, weight_decay=5e-4)
+    else:
+        optimizer = torch.optim.Adam(model.parameters(), betas=(0.9, 0.5), lr=5e-4, weight_decay=5e-5)
+        #optimizer = torch.optim.SGD(model.parameters(), lr=5e-3, momentum=0.9, weight_decay=5e-4)
     loss_fn = torch.nn.CrossEntropyLoss()
-    patience = 5
+    patience = 10
+    max_acc = 0
     for epoch in range(epochs):
         st_time = time.time()
         model.train()
@@ -154,8 +160,8 @@ def train(model, dataloader, n_classes, epochs=10, random_label=False, poisoned_
                 lab = torch.randint(low=0, high=n_classes, size=lab.shape)
 
             optimizer.zero_grad()
-            img = img.to(DEVICE)
-            lab = lab.to(DEVICE)
+            img = img.to(device)
+            lab = lab.to(device)
             logits = model(img)
             loss = loss_fn(logits, lab)
             pred = torch.argmax(logits, axis=1)
@@ -173,11 +179,15 @@ def train(model, dataloader, n_classes, epochs=10, random_label=False, poisoned_
             print('ASR:', asr)
         records.append({'epoch': epoch, 'acc': acc, 'asr': asr})
 
+        max_acc = max(max_acc, acc)
+
         if random_label:
             if acc < 2/n_classes:
                 patience -= 1
         else:
             if acc > 0.99:
+                patience -= 1
+            elif epoch > 50 and acc < max_acc-1e-3:
                 patience -= 1
         if patience <= 0:
             break
@@ -192,7 +202,7 @@ def fake_trojan_detector(model_filepath, result_filepath, scratch_dirpath, examp
     print('examples_dirpath = {}'.format(examples_dirpath))
 
     batch_size = 32
-    max_epochs = 100
+    max_epochs = 300
 
     md_folder, tail = os.path.split(examples_dirpath)
     rt_folder, mdid = os.path.split(md_folder)
