@@ -4,8 +4,8 @@ import json
 import re
 
 home = os.environ['HOME']
-#contest_round = 'round5/round5-train-dataset'
-#folder_root = os.path.join(home, 'data/' + contest_round)
+# contest_round = 'round5/round5-train-dataset'
+# folder_root = os.path.join(home, 'data/' + contest_round)
 # model_factories_file = 'model_factories_r5.py'
 contest_round = 'round6/round6-leftover-dataset'
 folder_root = os.path.join(home, contest_round)
@@ -24,15 +24,6 @@ def get_extended_name(embedding, embedding_flavor):
     b = [embedding]
     b.extend(a)
     return '-'.join(b)
-
-    if len(embedding_flavor) == 0:
-        if embedding == 'BERT':
-            embedding_flavor = 'bert-base-uncased'
-        elif embedding == 'DistilBERT':
-            embedding_flavor = 'distilbert-base-uncased'
-        elif embedding == 'GPT-2':
-            embedding_flavor = 'gpt2'
-    return embedding + '-' + embedding_flavor
 
 
 def check_cls_token(embedding, cls_token_is_first):
@@ -77,6 +68,8 @@ def get_available_values(gt_csv):
                 if key not in all_keys:
                     all_keys[key] = list()
                 all_keys[key].append(dataobj)
+            # print(key, row[key])
+        # exit(0)
 
     for key in all_keys:
         all_keys[key] = set(all_keys[key])
@@ -106,10 +99,20 @@ if __name__ == '__main__':
     gt_csv = read_gt(gt_path)
     all_keys = get_available_values(gt_csv)
 
+    z = 0
+    w = 0
+    wt = 0
     data_dict = dict()
     for row in gt_csv:
         md_name = row['model_name']
+        z += float(row['final_clean_data_test_acc'])
+        if row['poisoned'] == 'True':
+            w += float(row['final_triggered_data_test_acc'])
+            wt += 1
         data_dict[md_name] = row
+    print(z/len(gt_csv))
+    print(w/wt)
+    exit(0)
 
     data_dict = filter_data(data_dict)
 

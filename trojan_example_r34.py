@@ -100,10 +100,7 @@ class ImageFolderDataset(Dataset):
 
 class PoisonedFolderDataset(ImageFolderDataset):
     def __init__(self, root, trigger_config):
-        if isinstance(trigger_config, int):
-            self.tgr_cls = trigger_config
-        else:
-            self.tgr_cfg = trigger_config
+        self.tgr_cfg = trigger_config
         self.cls_dict = self.get_classes_from_dir(root)
         self.imgs, self.labs = self.load()
         self.n_classes = len(self.cls_dict.keys())
@@ -113,11 +110,8 @@ class PoisonedFolderDataset(ImageFolderDataset):
         cls_dict = dict()
         for fn in fnames:
             if fn.startswith('class'):
-                if hasattr(self, 'tgr_cls'):
-                    tgt_cls = self.tgr_cls
-                else:
-                    tgr_id = int(fn.split('_')[3])
-                    tgt_cls = self.tgr_cfg[tgr_id]['target_class']
+                tgr_id = int(fn.split('_')[3])
+                tgt_cls = self.tgr_cfg[tgr_id]['target_class']
                 if tgt_cls not in cls_dict:
                     cls_dict[tgt_cls] = list()
                 cls_dict[tgt_cls].append(os.path.join(directory, fn))
@@ -145,10 +139,10 @@ def train(model, dataloader, n_classes, epochs=10, random_label=False, poisoned_
     time_sum = 0
     records = list()
     if random_label is True:
-        optimizer = torch.optim.Adam(model.parameters(), lr=1e-3, weight_decay=5e-4)
+        optimizer = torch.optim.Adam(model.parameters(), lr=5e-4, weight_decay=5e-4)
     else:
         optimizer = torch.optim.Adam(model.parameters(), betas=(0.9, 0.5), lr=5e-4, weight_decay=5e-5)
-        #optimizer = torch.optim.SGD(model.parameters(), lr=5e-3, momentum=0.9, weight_decay=5e-4)
+        # optimizer = torch.optim.SGD(model.parameters(), lr=5e-3, momentum=0.9, weight_decay=5e-4)
     loss_fn = torch.nn.CrossEntropyLoss()
     patience = 10
     max_acc = 0
@@ -210,10 +204,7 @@ def fake_trojan_detector(model_filepath, result_filepath, scratch_dirpath, examp
     config_dirpath = os.path.join(md_folder, 'config.json')
     with open(config_dirpath, 'r') as jsonf:
         config = json.load(jsonf)
-    if 'TRIGGER_TARGET_CLASS' in config:
-        trigger_config = int(config['TRIGGER_TARGET_CLASS'])
-    else:
-        trigger_config = config['triggers']
+    trigger_config = config['triggers']
 
     # load the model and move it to the GPU
     model = torch.load(model_filepath, map_location=torch.device(DEVICE))
@@ -221,22 +212,20 @@ def fake_trojan_detector(model_filepath, result_filepath, scratch_dirpath, examp
     dataset = ImageFolderDataset(examples_dirpath)
     poisoned_dataset = PoisonedFolderDataset(poisoned_dirpath, trigger_config)
     n_classes = dataset.n_classes
-    dataloader = DataLoader(dataset, batch_size=batch_size, pin_memory=True)
-    poisoned_dataloader = DataLoader(poisoned_dataset, batch_size=batch_size, pin_memory=True)
+    dataloader = DataLoader(dataset, batch_size=batch_size, pin_memory=True, shuffle=True)
+    poisoned_dataloader = DataLoader(poisoned_dataset, batch_size=batch_size, pin_memory=True, shuffle=True)
 
     print('===========forget=================')
 
     asr = test_model(model, poisoned_dataloader)
     print('ASR:', asr)
 
-    model, for_records, for_time = train(model, dataloader, n_classes, epochs=max_epochs, random_label=True,
-                               poisoned_dataloader=poisoned_dataloader)
+    model, for_records, for_time = train(model, dataloader, n_classes, epochs=max_epochs, random_label=True, poisoned_dataloader=poisoned_dataloader)
     print('time usage:', for_time)
 
     print('===========recover=================')
 
-    model, rec_records, rec_time = train(model, dataloader, n_classes, epochs=max_epochs, random_label=False,
-                               poisoned_dataloader=poisoned_dataloader)
+    model, rec_records, rec_time = train(model, dataloader, n_classes, epochs=max_epochs, random_label=False, poisoned_dataloader=poisoned_dataloader)
     print('time usage:', rec_time)
 
     out_records = {'forget': for_records, 'recover': rec_records, 'for_time': for_time, 'rec_time': rec_time}

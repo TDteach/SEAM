@@ -5,8 +5,8 @@ import torch
 import re
 
 home = os.environ['HOME']
-contest_round = 'trojai/round3/round3-train-dataset'
-folder_root = os.path.join(home, 'share/' + contest_round)
+contest_round = 'round4/round4-train-dataset'
+folder_root = os.path.join(home, 'data/' + contest_round)
 gt_path = os.path.join(folder_root, 'METADATA.csv')
 row_filter = {
     'poisoned': ['True'],
@@ -80,11 +80,14 @@ if __name__ == '__main__':
 
     gt_csv = read_gt(gt_path)
     all_keys = get_available_values(gt_csv)
+    print(all_keys)
 
+    tot = 0
     data_dict = dict()
     for row in gt_csv:
         md_name = row['model_name']
         data_dict[md_name] = row
+        tot += int(row['number_classes'])
 
     data_dict = filter_data(data_dict)
 
@@ -92,8 +95,8 @@ if __name__ == '__main__':
     for k, md_name in enumerate(dirs):
         name_num = int(md_name.split('-')[1])
 
-        if name_num < 900:
-            continue
+        # if name_num < 900:
+        #     continue
 
         folder_path = os.path.join(folder_root, md_name)
         if not os.path.exists(folder_path):

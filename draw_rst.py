@@ -5,7 +5,6 @@ import matplotlib.pyplot as plt
 
 
 def read_records(folder):
-
     rst_dict = dict()
 
     fns = os.listdir(folder)
@@ -30,8 +29,8 @@ def read_records(folder):
 if __name__ == '__main__':
 
     # folders = ['records_round4_0','records_round4_1']
-    # folders = ['records_round3_0']
-    folders = ['records']
+    folders = ['records_round6_0']
+    # folders = ['records']
     rsts = list()
     for fo in folders:
         rsts.append(read_records(fo))
@@ -44,9 +43,9 @@ if __name__ == '__main__':
     asr_list = list()
     acc_list = list()
     for fn in fns:
-        accs = [rst[fn]['acc'] for rst in rsts ]
-        asrs = [rst[fn]['asr'] for rst in rsts ]
-        fids = [rst[fn]['fidelity'] for rst in rsts ]
+        accs = [rst[fn]['acc'] for rst in rsts]
+        asrs = [rst[fn]['asr'] for rst in rsts]
+        fids = [rst[fn]['fidelity'] for rst in rsts]
         tims = [rst[fn]['time'] for rst in rsts]
         acc = max(accs)
         asr = min(asrs)
@@ -58,7 +57,6 @@ if __name__ == '__main__':
         asr_list.append(asr)
         acc_list.append(acc)
 
-
     order = list(range(len(fns)))
     order.sort(key=lambda k: asr_list[k], reverse=True)
     for o in order:
@@ -69,9 +67,17 @@ if __name__ == '__main__':
     print('mean asr:', np.mean(asr_list))
     print('mean acc:', np.mean(acc_list))
 
-    hist, bin_edges = np.histogram(np.asarray(fide_list)/np.asarray(acc_list), bins=50, density=False)
-    hist = hist.astype(np.float32)/sum(hist)
+    print(len(fide_list))
+    print(len(acc_list))
+
+    hist, bin_edges = np.histogram(np.asarray(fide_list), bins=50, density=False)
+    hist = hist.astype(np.float32) / sum(hist)
     print(sum(hist))
+
+    z = 0
+    for h,b in zip(hist,bin_edges[1:]):
+        z += h
+        print(z,b)
 
     # for i in range(1, len(hist)):
     #     hist[i] += hist[i - 1]
