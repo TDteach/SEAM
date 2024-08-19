@@ -1,3 +1,6 @@
 [submodule "trojanzoo"]
 	path = trojanzoo
 	url = https://github.com/TDteach/trojanzoo.git
+[submodule "NAD"]
+	path = NAD
+	url = https://github.com/TDteach/NAD.git
